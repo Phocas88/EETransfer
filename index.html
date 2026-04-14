@@ -6,11 +6,12 @@
 <title>EE Toano Transfer</title>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800;900&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+<script src="https://unpkg.com/@zxing/library@0.20.0/umd/index.min.js"></script>
 <style>
 :root{
-  --bg:#080c10;--surface:#0e1520;--card:#121a26;--border:#1e2d40;
-  --accent:#00c8ff;--green:#1fd480;--red:#ff4d4d;--purple:#a78bfa;
-  --toano:#f59e0b;--text:#dde8f0;--muted:#4a6080;
+  --bg:#0f1d2e;--surface:#162840;--card:#1a3050;--border:#2a4a6a;
+  --accent:#00d4ff;--green:#22e88a;--red:#ff5f5f;--purple:#b89dff;
+  --toano:#fbbf24;--text:#e8f4ff;--muted:#7aa0c0;
   --font:'Barlow Condensed',sans-serif;--body:'Barlow',sans-serif;
 }
 *{box-sizing:border-box;margin:0;padding:0}
@@ -121,6 +122,17 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
 /* EE accent stripe on scan bar */
 .scan-bar::before{content:'';display:block;height:2px;background:linear-gradient(90deg,var(--accent),var(--toano));border-radius:2px;margin-bottom:14px}
 
+/* Camera overlay */
+#camOverlay{position:fixed;inset:0;background:#000;z-index:2000;display:none;flex-direction:column;align-items:center;justify-content:flex-start;padding-top:20px}
+#camOverlay.active{display:flex}
+#camVideo{width:min(400px,95vw);border-radius:12px;border:3px solid var(--accent);background:#111;display:block}
+.cam-aim{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:220px;height:120px;border:3px solid var(--accent);border-radius:8px;box-shadow:0 0 0 9999px rgba(0,0,0,.55);pointer-events:none}
+.cam-status{margin-top:14px;font-family:var(--font);font-size:1rem;font-weight:700;letter-spacing:.08em;color:var(--muted);text-align:center;padding:0 20px}
+.cam-status.found{color:var(--green)}
+.cam-status.err{color:var(--red)}
+#camClose{margin-top:18px;background:var(--red);color:#fff;border:none;border-radius:10px;padding:12px 36px;font-family:var(--font);font-size:1.1rem;font-weight:800;cursor:pointer;letter-spacing:.06em}
+#camTitle{font-family:var(--font);font-size:1.3rem;font-weight:900;color:var(--accent);letter-spacing:.08em;margin-bottom:14px}
+
 @media(max-width:640px){.kpi-grid{grid-template-columns:repeat(2,1fr)}.hide-sm{display:none!important}}
 </style>
 </head>
@@ -132,6 +144,17 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
 <div id="app" style="display:none;flex-direction:column;min-height:100vh"></div>
 <div id="toast"></div>
 <div id="modal-root"></div>
+
+<!-- Camera overlay -->
+<div id="camOverlay">
+  <div id="camTitle">📷 SCAN BARCODE</div>
+  <div style="position:relative;display:inline-block">
+    <video id="camVideo" autoplay playsinline muted></video>
+    <div class="cam-aim"></div>
+  </div>
+  <div class="cam-status" id="camStatus">Initializing camera…</div>
+  <button id="camClose">✕ CANCEL</button>
+</div>
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
@@ -320,6 +343,7 @@ function renderPick() {
     (palletLock ? 'Scan EE product UPC/GTIN...' : 'Scan UPC, GTIN, or type EE product code...') +
     '" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">';
   html += '<button class="btn btn-accent" id="scan-btn">SCAN</button>';
+  html += '<button class="btn" id="cam-btn" style="background:var(--surface);border:2px solid var(--accent);color:var(--accent);padding:0 16px" title="Camera scan">📷</button>';
   html += '</div>';
 
   // Quick stats
@@ -378,6 +402,9 @@ function renderPick() {
     scanInp.onkeydown = e => { if (e.key === "Enter") doScan(); };
   }
   if (scanBtn) scanBtn.onclick = doScan;
+
+  const camBtn = document.getElementById("cam-btn");
+  if (camBtn) camBtn.onclick = openCamera;
 
   const unlockBtn = document.getElementById("unlock-btn");
   if (unlockBtn) unlockBtn.onclick = () => { palletLock = null; renderPick(); };
@@ -1191,6 +1218,115 @@ function showToast(msg, color) {
   t.style.display = "block";
   clearTimeout(t._tmr);
   t._tmr = setTimeout(() => { t.style.display = "none"; }, 2800);
+}
+
+// ═══════════════════════════════════════════════════════
+// CAMERA SCANNER  (ZXing)
+// ═══════════════════════════════════════════════════════
+let codeReader = null;
+let cameraActive = false;
+
+async function openCamera() {
+  document.getElementById("camOverlay").classList.add("active");
+  document.getElementById("camStatus").textContent = "Initializing camera…";
+  document.getElementById("camStatus").className = "cam-status";
+  document.getElementById("camClose").onclick = closeCamera;
+  cameraActive = true;
+
+  try {
+    if (typeof ZXing === "undefined") throw new Error("Scanner library not loaded.");
+
+    const hints = new Map();
+    hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+      ZXing.BarcodeFormat.CODE_128, ZXing.BarcodeFormat.CODE_39,
+      ZXing.BarcodeFormat.EAN_13,   ZXing.BarcodeFormat.EAN_8,
+      ZXing.BarcodeFormat.UPC_A,    ZXing.BarcodeFormat.UPC_E,
+      ZXing.BarcodeFormat.QR_CODE,  ZXing.BarcodeFormat.DATA_MATRIX,
+      ZXing.BarcodeFormat.ITF,      ZXing.BarcodeFormat.PDF_417,
+      ZXing.BarcodeFormat.CODE_93,  ZXing.BarcodeFormat.INTERLEAVED_2_OF_5,
+    ]);
+    codeReader = new ZXing.BrowserMultiFormatReader(hints, 150);
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+    });
+
+    const track = stream.getVideoTracks()[0];
+    if (track && track.applyConstraints) {
+      try { await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }); } catch(e) {}
+    }
+
+    const video = document.getElementById("camVideo");
+    video.srcObject = stream;
+    await video.play();
+    document.getElementById("camStatus").textContent = "Point camera at barcode…";
+
+    codeReader.decodeFromStream(stream, video, (result, err) => {
+      if (!cameraActive) return;
+      if (result) {
+        const code = result.getText();
+        document.getElementById("camStatus").textContent = "✓ " + code;
+        document.getElementById("camStatus").className = "cam-status found";
+        if (navigator.vibrate) navigator.vibrate([80, 40, 80]);
+        setTimeout(() => {
+          closeCamera();
+          // Feed the scanned code into the scan input and trigger doScan
+          const inp = document.getElementById("scan-inp");
+          if (inp) { inp.value = code; doScan(); }
+          else {
+            // If pick view isn't rendered yet (e.g. pending scan state), handle directly
+            handleCameraResult(code);
+          }
+        }, 350);
+      }
+      if (err && !(err instanceof ZXing.NotFoundException)) {
+        console.warn("ZXing:", err);
+      }
+    });
+
+  } catch(e) {
+    let msg = e.message;
+    if (e.name === "NotAllowedError") msg = "Camera permission denied — check browser settings.";
+    if (e.name === "NotFoundError")   msg = "No camera found on this device.";
+    if (e.name === "NotReadableError") msg = "Camera in use by another app — close it and retry.";
+    document.getElementById("camStatus").textContent = msg;
+    document.getElementById("camStatus").className = "cam-status err";
+    cameraActive = false;
+  }
+}
+
+function closeCamera() {
+  cameraActive = false;
+  try { if (codeReader) { codeReader.reset(); codeReader = null; } } catch(e) {}
+  const v = document.getElementById("camVideo");
+  try { if (v && v.srcObject) { v.srcObject.getTracks().forEach(t => t.stop()); v.srcObject = null; } } catch(e) {}
+  document.getElementById("camOverlay").classList.remove("active");
+}
+
+function handleCameraResult(code) {
+  // Fallback: directly process the scanned code when scan-inp isn't available
+  const raw = code.trim().toUpperCase();
+  if (!raw) return;
+  if (isPalletId(raw)) {
+    if (pendingScan) {
+      const palInp = document.getElementById("pallet-inp");
+      if (palInp) { palInp.value = raw; palInp.style.borderColor = "var(--green)"; document.getElementById("qty-inp")?.focus(); }
+    } else {
+      palletLock = raw;
+      showToast("🪟 Pallet " + raw + " locked — scan a product", "var(--accent)");
+      renderPick();
+    }
+    return;
+  }
+  let resolvedCode = BARCODE_LOOKUP[raw] || raw;
+  resolvedCode = resolvedCode.toUpperCase();
+  const product = EE_PRODUCTS[resolvedCode];
+  pendingScan = product
+    ? { found: true, code: resolvedCode, barcode: raw !== resolvedCode ? raw : null, bin: product.bin||"", upc: product.upc||"", gtin: product.gtin||"" }
+    : { found: false, code: resolvedCode, barcode: raw !== resolvedCode ? raw : null };
+  if (palletLock) palletChoice = "join";
+  renderPick();
 }
 
 boot();
