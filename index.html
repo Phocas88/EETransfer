@@ -6,7 +6,7 @@
 <title>EE Toano Transfer</title>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800;900&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-<script src="https://unpkg.com/@zxing/library@0.20.0/umd/index.min.js"></script>
+<script src="https://unpkg.com/@zxing/library@0.19.1/umd/index.min.js"></script>
 <style>
 :root{
   --bg:#0f1d2e;--surface:#162840;--card:#1a3050;--border:#2a4a6a;
@@ -122,16 +122,25 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
 /* EE accent stripe on scan bar */
 .scan-bar::before{content:'';display:block;height:2px;background:linear-gradient(90deg,var(--accent),var(--toano));border-radius:2px;margin-bottom:14px}
 
-/* Camera overlay */
-#camOverlay{position:fixed;inset:0;background:#000;z-index:2000;display:none;flex-direction:column;align-items:center;justify-content:flex-start;padding-top:20px}
-#camOverlay.active{display:flex}
-#camVideo{width:min(400px,95vw);border-radius:12px;border:3px solid var(--accent);background:#111;display:block}
-.cam-aim{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:220px;height:120px;border:3px solid var(--accent);border-radius:8px;box-shadow:0 0 0 9999px rgba(0,0,0,.55);pointer-events:none}
-.cam-status{margin-top:14px;font-family:var(--font);font-size:1rem;font-weight:700;letter-spacing:.08em;color:var(--muted);text-align:center;padding:0 20px}
-.cam-status.found{color:var(--green)}
-.cam-status.err{color:var(--red)}
-#camClose{margin-top:18px;background:var(--red);color:#fff;border:none;border-radius:10px;padding:12px 36px;font-family:var(--font);font-size:1.1rem;font-weight:800;cursor:pointer;letter-spacing:.06em}
-#camTitle{font-family:var(--font);font-size:1.3rem;font-weight:900;color:var(--accent);letter-spacing:.08em;margin-bottom:14px}
+/* Camera overlay — exact RTP implementation */
+#camOverlay{display:none;position:fixed;inset:0;background:#000;z-index:2000;flex-direction:column;}
+#camOverlay.active{display:flex;}
+.cam-header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:rgba(0,0,0,0.85);}
+.cam-title{font-family:var(--font);font-size:13px;color:#fff;letter-spacing:1px;font-weight:700;}
+.cam-engine{font-size:10px;opacity:0.6;}
+.cam-close{background:none;border:1px solid rgba(255,255,255,0.25);border-radius:8px;color:#fff;font-size:13px;padding:7px 14px;cursor:pointer;}
+.cam-video-wrap{flex:1;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;}
+#camVideo{width:100%;height:100%;object-fit:cover;}
+.cam-reticle{position:absolute;width:72%;max-width:280px;height:140px;border:3px solid var(--accent);border-radius:10px;box-shadow:0 0 0 2000px rgba(0,0,0,0.55);pointer-events:none;}
+.cam-reticle-corner{position:absolute;width:20px;height:20px;border-color:var(--accent);border-style:solid;opacity:0.9;}
+.cam-reticle-corner.tl{top:-3px;left:-3px;border-width:3px 0 0 3px;border-radius:4px 0 0 0;}
+.cam-reticle-corner.tr{top:-3px;right:-3px;border-width:3px 3px 0 0;border-radius:0 4px 0 0;}
+.cam-reticle-corner.bl{bottom:-3px;left:-3px;border-width:0 0 3px 3px;border-radius:0 0 0 4px;}
+.cam-reticle-corner.br{bottom:-3px;right:-3px;border-width:0 3px 3px 0;border-radius:0 0 4px 0;}
+.cam-hint{position:absolute;bottom:20px;font-size:12px;color:rgba(255,255,255,0.7);text-align:center;width:100%;letter-spacing:0.3px;}
+.cam-status{padding:12px 16px;background:rgba(0,0,0,0.9);font-size:13px;color:var(--muted);text-align:center;font-family:var(--font);min-height:46px;display:flex;align-items:center;justify-content:center;}
+.cam-status.found{color:var(--green);}
+.cam-status.err{color:var(--red);}
 
 @media(max-width:640px){.kpi-grid{grid-template-columns:repeat(2,1fr)}.hide-sm{display:none!important}}
 </style>
@@ -145,15 +154,26 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
 <div id="toast"></div>
 <div id="modal-root"></div>
 
-<!-- Camera overlay -->
+<!-- Camera overlay — exact RTP implementation -->
 <div id="camOverlay">
-  <div id="camTitle">📷 SCAN BARCODE</div>
-  <div style="position:relative;display:inline-block">
+  <div class="cam-header">
+    <div>
+      <div class="cam-title">📷 BARCODE SCANNER <span class="cam-engine" id="camEngineLabel"></span></div>
+      <div style="font-size:11px;color:var(--accent);margin-top:2px;font-family:var(--font);font-weight:700" id="camTargetLabel">Scanning…</div>
+    </div>
+    <button class="cam-close" onclick="closeCamera()">✕ Cancel</button>
+  </div>
+  <div class="cam-video-wrap">
     <video id="camVideo" autoplay playsinline muted></video>
-    <div class="cam-aim"></div>
+    <div class="cam-reticle">
+      <div class="cam-reticle-corner tl"></div>
+      <div class="cam-reticle-corner tr"></div>
+      <div class="cam-reticle-corner bl"></div>
+      <div class="cam-reticle-corner br"></div>
+    </div>
+    <div class="cam-hint">Center barcode within the frame</div>
   </div>
   <div class="cam-status" id="camStatus">Initializing camera…</div>
-  <button id="camClose">✕ CANCEL</button>
 </div>
 
 <script type="module">
@@ -1221,77 +1241,95 @@ function showToast(msg, color) {
 }
 
 // ═══════════════════════════════════════════════════════
-// CAMERA SCANNER  (ZXing)
+// CAMERA SCANNER — exact RTP implementation
+// PATH 1: Native BarcodeDetector (hardware-accelerated, instant on Android Chrome)
+// PATH 2: ZXing 0.19.1 fallback
 // ═══════════════════════════════════════════════════════
-let codeReader = null;
-let cameraActive = false;
+let codeReader = null, cameraActive = false;
+
+const USE_NATIVE = ('BarcodeDetector' in window);
+let nativeDetector = null;
+if (USE_NATIVE) {
+  try {
+    nativeDetector = new BarcodeDetector({ formats: [
+      'code_128','code_39','code_93','ean_13','ean_8',
+      'upc_a','upc_e','qr_code','data_matrix','itf','pdf417'
+    ]});
+  } catch(e) { nativeDetector = null; }
+}
 
 async function openCamera() {
-  document.getElementById("camOverlay").classList.add("active");
-  document.getElementById("camStatus").textContent = "Initializing camera…";
-  document.getElementById("camStatus").className = "cam-status";
-  document.getElementById("camClose").onclick = closeCamera;
+  document.getElementById('camEngineLabel').textContent = USE_NATIVE && nativeDetector ? '· Native' : '· ZXing';
+  document.getElementById('camTargetLabel').textContent = 'Scanning EE Product…';
+  document.getElementById('camStatus').textContent = 'Initializing camera…';
+  document.getElementById('camStatus').className = 'cam-status';
+  document.getElementById('camOverlay').classList.add('active');
   cameraActive = true;
 
   try {
-    if (typeof ZXing === "undefined") throw new Error("Scanner library not loaded.");
-
-    const hints = new Map();
-    hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
-    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
-      ZXing.BarcodeFormat.CODE_128, ZXing.BarcodeFormat.CODE_39,
-      ZXing.BarcodeFormat.EAN_13,   ZXing.BarcodeFormat.EAN_8,
-      ZXing.BarcodeFormat.UPC_A,    ZXing.BarcodeFormat.UPC_E,
-      ZXing.BarcodeFormat.QR_CODE,  ZXing.BarcodeFormat.DATA_MATRIX,
-      ZXing.BarcodeFormat.ITF,      ZXing.BarcodeFormat.PDF_417,
-      ZXing.BarcodeFormat.CODE_93,  ZXing.BarcodeFormat.INTERLEAVED_2_OF_5,
-    ]);
-    codeReader = new ZXing.BrowserMultiFormatReader(hints, 150);
-
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } }
-    });
-
+    const stream = await navigator.mediaDevices.getUserMedia({ video: {
+      facingMode: { ideal: 'environment' },
+      width: { ideal: 1920 }, height: { ideal: 1080 }
+    }});
     const track = stream.getVideoTracks()[0];
     if (track && track.applyConstraints) {
-      try { await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }); } catch(e) {}
+      try { await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }, { zoom: 1 }] }); } catch(e) {}
     }
-
-    const video = document.getElementById("camVideo");
+    const video = document.getElementById('camVideo');
     video.srcObject = stream;
     await video.play();
-    document.getElementById("camStatus").textContent = "Point camera at barcode…";
 
-    codeReader.decodeFromStream(stream, video, (result, err) => {
-      if (!cameraActive) return;
-      if (result) {
-        const code = result.getText();
-        document.getElementById("camStatus").textContent = "✓ " + code;
-        document.getElementById("camStatus").className = "cam-status found";
-        if (navigator.vibrate) navigator.vibrate([80, 40, 80]);
-        setTimeout(() => {
-          closeCamera();
-          // Feed the scanned code into the scan input and trigger doScan
-          const inp = document.getElementById("scan-inp");
-          if (inp) { inp.value = code; doScan(); }
-          else {
-            // If pick view isn't rendered yet (e.g. pending scan state), handle directly
+    if (USE_NATIVE && nativeDetector) {
+      // ── PATH 1: Native BarcodeDetector (hardware-accelerated, instant) ──
+      document.getElementById('camStatus').textContent = 'Ready — point at barcode';
+      const scanFrame = async () => {
+        if (!cameraActive) return;
+        try {
+          const barcodes = await nativeDetector.detect(video);
+          if (barcodes.length) {
+            const code = barcodes[0].rawValue;
+            document.getElementById('camStatus').textContent = '✓ ' + code;
+            document.getElementById('camStatus').className = 'cam-status found';
+            if (navigator.vibrate) navigator.vibrate([60, 30, 60]);
+            cameraActive = false;
+            closeCamera();
             handleCameraResult(code);
+            return;
           }
-        }, 350);
-      }
-      if (err && !(err instanceof ZXing.NotFoundException)) {
-        console.warn("ZXing:", err);
-      }
-    });
-
+        } catch(e) { /* frame not ready */ }
+        if (cameraActive) requestAnimationFrame(scanFrame);
+      };
+      requestAnimationFrame(scanFrame);
+    } else {
+      // ── PATH 2: ZXing fallback ──
+      if (typeof ZXing === 'undefined') throw new Error('Scanner library not loaded.');
+      const hints = new Map();
+      hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+      hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+        ZXing.BarcodeFormat.CODE_128, ZXing.BarcodeFormat.CODE_39,
+        ZXing.BarcodeFormat.EAN_13,   ZXing.BarcodeFormat.EAN_8,
+        ZXing.BarcodeFormat.UPC_A,    ZXing.BarcodeFormat.UPC_E,
+        ZXing.BarcodeFormat.QR_CODE,  ZXing.BarcodeFormat.DATA_MATRIX,
+        ZXing.BarcodeFormat.ITF,      ZXing.BarcodeFormat.PDF_417,
+        ZXing.BarcodeFormat.CODE_93,
+      ]);
+      codeReader = new ZXing.BrowserMultiFormatReader(hints, 100);
+      document.getElementById('camStatus').textContent = 'Ready — point at barcode';
+      codeReader.decodeFromStream(stream, video, (result) => {
+        if (!cameraActive || !result) return;
+        const code = result.getText();
+        document.getElementById('camStatus').textContent = '✓ ' + code;
+        document.getElementById('camStatus').className = 'cam-status found';
+        if (navigator.vibrate) navigator.vibrate([60, 30, 60]);
+        setTimeout(() => { closeCamera(); handleCameraResult(code); }, 200);
+      });
+    }
   } catch(e) {
     let msg = e.message;
-    if (e.name === "NotAllowedError") msg = "Camera permission denied — check browser settings.";
-    if (e.name === "NotFoundError")   msg = "No camera found on this device.";
-    if (e.name === "NotReadableError") msg = "Camera in use by another app — close it and retry.";
-    document.getElementById("camStatus").textContent = msg;
-    document.getElementById("camStatus").className = "cam-status err";
+    if (e.name === 'NotAllowedError') msg = 'Camera permission denied — check browser settings.';
+    if (e.name === 'NotFoundError')   msg = 'No camera found on this device.';
+    document.getElementById('camStatus').textContent = msg;
+    document.getElementById('camStatus').className = 'cam-status err';
     cameraActive = false;
   }
 }
@@ -1299,33 +1337,41 @@ async function openCamera() {
 function closeCamera() {
   cameraActive = false;
   try { if (codeReader) { codeReader.reset(); codeReader = null; } } catch(e) {}
-  const v = document.getElementById("camVideo");
+  const v = document.getElementById('camVideo');
   try { if (v && v.srcObject) { v.srcObject.getTracks().forEach(t => t.stop()); v.srcObject = null; } } catch(e) {}
-  document.getElementById("camOverlay").classList.remove("active");
+  document.getElementById('camOverlay').classList.remove('active');
 }
 
 function handleCameraResult(code) {
-  // Fallback: directly process the scanned code when scan-inp isn't available
   const raw = code.trim().toUpperCase();
   if (!raw) return;
-  if (isPalletId(raw)) {
-    if (pendingScan) {
-      const palInp = document.getElementById("pallet-inp");
-      if (palInp) { palInp.value = raw; palInp.style.borderColor = "var(--green)"; document.getElementById("qty-inp")?.focus(); }
-    } else {
-      palletLock = raw;
-      showToast("🪟 Pallet " + raw + " locked — scan a product", "var(--accent)");
-      renderPick();
+  // If waiting for a pallet ID to join, fill pallet-inp directly
+  if (pendingScan && palletChoice === 'join') {
+    const palInp = document.getElementById('pallet-inp');
+    if (palInp) {
+      palInp.value = raw;
+      palInp.style.borderColor = 'var(--green)';
+      showToast('🪟 ' + raw + ' — enter qty and confirm', 'var(--green)');
+      document.getElementById('qty-inp')?.focus();
     }
     return;
   }
-  let resolvedCode = BARCODE_LOOKUP[raw] || raw;
-  resolvedCode = resolvedCode.toUpperCase();
+  // Normal product scan — feed into scan input and run doScan
+  const inp = document.getElementById('scan-inp');
+  if (inp) { inp.value = raw; doScan(); return; }
+  // Edge case: scan-inp not in DOM
+  if (isPalletId(raw)) {
+    palletLock = raw;
+    showToast('🪟 Pallet ' + raw + ' locked — scan a product', 'var(--accent)');
+    renderPick();
+    return;
+  }
+  let resolvedCode = (BARCODE_LOOKUP[raw] || raw).toUpperCase();
   const product = EE_PRODUCTS[resolvedCode];
   pendingScan = product
-    ? { found: true, code: resolvedCode, barcode: raw !== resolvedCode ? raw : null, bin: product.bin||"", upc: product.upc||"", gtin: product.gtin||"" }
+    ? { found: true, code: resolvedCode, barcode: raw !== resolvedCode ? raw : null, bin: product.bin||'', upc: product.upc||'', gtin: product.gtin||'' }
     : { found: false, code: resolvedCode, barcode: raw !== resolvedCode ? raw : null };
-  if (palletLock) palletChoice = "join";
+  if (palletLock) palletChoice = 'join';
   renderPick();
 }
 
