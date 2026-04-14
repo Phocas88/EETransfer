@@ -358,12 +358,17 @@ function renderPick() {
       '<button id="unlock-btn" style="margin-left:auto;background:none;border:1px solid var(--muted);color:var(--muted);border-radius:5px;padding:2px 10px;font-size:.75rem;cursor:pointer">✕ UNLOCK</button>' +
     '</div>';
   }
+  // Camera button — full width tap target on mobile
+  html += '<button id="cam-btn" style="width:100%;background:var(--surface);border:2px solid var(--accent);color:var(--accent);border-radius:10px;padding:13px;font-family:var(--font);font-size:1rem;font-weight:800;letter-spacing:.06em;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:10px">' +
+    '<span style="font-size:1.4rem">📷</span>' +
+    '<span>TAP TO SCAN BARCODE</span>' +
+  '</button>';
+  // Keyboard / wedge scanner input row
   html += '<div class="flex gap8 center">';
   html += '<input id="scan-inp" class="inp inp-lg" style="flex:1" placeholder="' +
-    (palletLock ? 'Scan EE product UPC/GTIN...' : 'Scan UPC, GTIN, or type EE product code...') +
+    (palletLock ? 'Or type / wedge scan...' : 'Or type / wedge scan UPC, GTIN, item code...') +
     '" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">';
-  html += '<button class="btn btn-accent" id="scan-btn">SCAN</button>';
-  html += '<button class="btn" id="cam-btn" style="background:var(--surface);border:2px solid var(--accent);color:var(--accent);padding:0 16px" title="Camera scan">📷</button>';
+  html += '<button class="btn btn-accent" id="scan-btn">GO</button>';
   html += '</div>';
 
   // Quick stats
